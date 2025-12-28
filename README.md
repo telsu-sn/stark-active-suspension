@@ -29,5 +29,5 @@ pip install -r requirements.txt
 ## Files
 - `run_simulation.py`: quarter-car simulation + controller
 - `requirements.txt`: dependencies
-- `Untitled document(1).pdf`: technical explanation and plots
+- `Untitled document(2).pdf`: technical explanation and plots
 

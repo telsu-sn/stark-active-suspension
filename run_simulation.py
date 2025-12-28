@@ -16,13 +16,13 @@ if not os.path.exists(FILE_PATH):
 print(f"Dataset loaded from: {FILE_PATH}")
 
 # ============================================================
-# 2. SYSTEM PARAMETERS
+# 2. SYSTEM PARAMETERS (GIVEN)
 # ============================================================
 
-MS = 290.0
-MU = 59.0
-KS = 16000.0
-KT = 190000.0
+MS = 290.0      # sprung mass (kg)
+MU = 59.0       # unsprung mass (kg)
+KS = 16000.0    # suspension stiffness (N/m)
+KT = 190000.0   # tire stiffness (N/m)
 
 C_MIN = 800.0
 C_MAX = 3500.0
@@ -31,23 +31,16 @@ DT = 0.005
 DELAY_STEPS = 4
 
 # ============================================================
-# 3. CONTROLLER GAINS (BEST FOUND)
+# 3. FINAL TUNED CONTROLLER GAINS (LEADERBOARD)
 # ============================================================
 
-# Low-frequency skyhook (body displacement)
-SKYHOOK_GAIN_LF = 3600.0
-
-# High-frequency skyhook (jerk suppression)
-SKYHOOK_GAIN_HF = 4000.0
-
-# Groundhook (wheel control)
-GROUND_GAIN = 250.0
-
-# Acceleration feedback (body force shaping)
-ACC_GAIN = 120.0
+SKYHOOK_GAIN_LF = 4800.0   # low-frequency body control
+SKYHOOK_GAIN_HF = 4200.0   # high-frequency jerk suppression
+GROUND_GAIN    = 250.0    # wheel control
+ACC_GAIN       = 100.0    # acceleration feedback
 
 # ============================================================
-# 4. UTILITIES
+# 4. UTILITY FUNCTIONS
 # ============================================================
 
 def rms(x):
@@ -59,20 +52,21 @@ def soft_clip(x, xmin, xmax):
     return mid + span * np.tanh((x - mid) / span)
 
 # ============================================================
-# 5. QUARTER-CAR SIMULATION (FREQUENCY SELECTIVE)
+# 5. QUARTER-CAR SIMULATION
 # ============================================================
 
 def simulate_quarter_car(road):
 
     N = len(road)
 
-    # State variables
+    # States
     z_s = v_s = z_u = v_u = 0.0
 
     zs_hist = np.zeros(N)
+    zu_hist = np.zeros(N)
     acc_s_hist = np.zeros(N)
 
-    # Low-pass filtered velocities
+    # Filters
     v_s_lf = 0.0
     v_u_lf = 0.0
 
@@ -85,33 +79,30 @@ def simulate_quarter_car(road):
     for i in range(N):
 
         r = road[i]
-
-        # --- delayed command ---
         c_act = c_buffer.pop(0)
 
-        # --- forces ---
+        # Forces
         f_spring = KS * (z_s - z_u)
         f_damper = c_act * (v_s - v_u)
         f_tire   = KT * (z_u - r)
 
-        # --- accelerations ---
+        # Accelerations
         a_s = -(f_spring + f_damper) / MS
         a_u = (f_spring + f_damper - f_tire) / MU
 
+        # Store histories
         zs_hist[i] = z_s
+        zu_hist[i] = z_u
         acc_s_hist[i] = a_s
 
         # ====================================================
-        # CONTROLLER
+        # CONTROLLER (FREQUENCY-SELECTIVE SKYHOOK)
         # ====================================================
 
-        # Low-pass velocity filters
         v_s_lf = 0.05 * v_s + 0.95 * v_s_lf
         v_u_lf = 0.15 * v_u + 0.85 * v_u_lf
 
-        # High-frequency body velocity
         v_s_hf = v_s - v_s_lf
-
         rel_vel = v_s - v_u
 
         c_target = C_MIN
@@ -131,8 +122,6 @@ def simulate_quarter_car(road):
 
         # Saturation
         c_target = soft_clip(c_target, C_MIN, C_MAX)
-
-        # Push into delay buffer
         c_buffer.append(c_target)
 
         # ====================================================
@@ -148,7 +137,7 @@ def simulate_quarter_car(road):
         prev_a_s = a_s
         prev_a_u = a_u
 
-    return zs_hist, acc_s_hist
+    return zs_hist, zu_hist, acc_s_hist
 
 # ============================================================
 # 6. METRICS (EXACT SPEC)
@@ -174,35 +163,5 @@ def compute_metrics(zs, acc_s):
         + jerk_max
     )
 
-    return rms_zs, max_zs, rms_jerk, comfort
+    return rms_zs, max_zs, rms_je_
 
-# ============================================================
-# 7. MAIN
-# ============================================================
-
-df = pd.read_csv(FILE_PATH)
-
-results = []
-
-print("\nRunning BEST FREQUENCY-SELECTIVE CONTROLLER...")
-
-for i in range(1, 6):
-
-    name = f"profile_{i}"
-    road = df[name].values
-
-    zs, acc_s = simulate_quarter_car(road)
-    m1, m2, m3, score = compute_metrics(zs, acc_s)
-
-    results.append([name, m1, m2, m3, score])
-    print(f"{name} | comfort_score = {score:.4f}")
-
-submission = pd.DataFrame(
-    results,
-    columns=["profile", "rms_zs", "max_zs", "rms_jerk", "comfort_score"]
-)
-
-submission.to_csv("submission.csv", index=False)
-
-print("\nsubmission.csv generated successfully")
-print(submission)
